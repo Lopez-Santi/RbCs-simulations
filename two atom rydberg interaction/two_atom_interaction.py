@@ -72,6 +72,7 @@ class ExperimentConfig:
     R_axis_um: Tuple[float, float, float] = field(default_factory=lambda: (1.0, 0.0, 0.0))  # unit vector
 
     # relevant timing settings
+    t_pi_atom1_us: float = 1.0 # atom1 π pulse time (μs)
     t_wait_s: float = 0.0 # wait time between pulses (not tested)
     T1_use_ARC: bool = True # whether to use ARC lifetimes for T1
 
@@ -98,7 +99,8 @@ class ExperimentConfig:
     broadening: bool = True  # turn on or off broadening
     simulate_atom1_recapture: bool = False  # whether to simulate atom1 recapture
     simulate_atom2_recapture: bool = False  # whether to simulate atom2 recapture
-
+    hamiltonian_on: bool = True  # whether to turn on the Hamiltonian evolution
+    
     N_mc: int = 200  # number of Monte Carlo samples per detuning
     N_steps: int = 20  # number of time steps in evolution
     seed: Optional[int] = None#1234
@@ -106,6 +108,13 @@ class ExperimentConfig:
     plot_displacements: bool = False # whether to plot displacement histograms after simulation
     positions_list: list = field(default_factory=list) # to store positions for plotting
     velocities_list: list = field(default_factory=list) # to store velocities for plotting
+    energy_array1: list = field(default_factory=list) # to store energy arrays if recapture simulated
+    energy_array2: list = field(default_factory=list) # to store energy arrays if recapture simulated
+    positions1_list: list = field(default_factory=list) # to store positions if recapture simulated
+    positions2_list: list = field(default_factory=list) # to store positions if recapture simulated
+    velocities1_list: list = field(default_factory=list) # to store velocities if recapture simulated
+    velocities2_list: list = field(default_factory=list) # to store velocities if recapture simulated
+    n_list: list = field(default_factory=list) # to store n values if needed
 
 # ----------------------------
 # C6 calculation with ARC - using perturbation theory
@@ -242,7 +251,8 @@ def build_time_dependent_H(OMEGA_atom1_rad: float,
 
 # function to check if atom is recaptured
 # ----------------------------
-def is_atom_recaptured(x0: Tuple[float, float, float],
+def is_atom_recaptured(cfg: ExperimentConfig,
+                       x0: Tuple[float, float, float],
                        v0: Tuple[float, float, float],
                        m_kg: float,
                        omegas_Hz_xyz: Tuple[float, float, float],
@@ -278,8 +288,9 @@ def is_atom_recaptured(x0: Tuple[float, float, float],
 
     # calculate potential energy using gaussian beam
     # calculate beam waist from radial and axial trap frequencies
-    w0 = (omegas_Hz_xyz[0] / omegas_Hz_xyz[2]) * wavelength_nm*1e-9 / (np.pi * np.sqrt(2))
-
+    # w0 = (omegas_Hz_xyz[0] / omegas_Hz_xyz[2]) * wavelength_nm*1e-9 / (np.pi * np.sqrt(2))
+    w0 = 0.6*1e-6 # hardcoded beam waist in m
+    # print(w0)
     # calculate the beam waist at position z
     w_z = w0 * np.sqrt(1 + (r_vec[2] / (np.pi * w0**2 / (wavelength_nm*1e-9)))**2 )
 
@@ -288,8 +299,8 @@ def is_atom_recaptured(x0: Tuple[float, float, float],
 
     # total energy in J
     total_E = KE + Ur
-
-    return total_E <= U0
+    energy_array = np.array([KE, Ur, U0])
+    return total_E <= U0, energy_array
 
 # Stochastic kinematics models
 # ----------------------------
@@ -306,16 +317,10 @@ def _sample_axis_QHO(m_kg: float, omega_Hz: float, T_uK: float, rng) -> Tuple[fl
     """
     temp = T_uK * 1e-6
     omega = TWOPI * omega_Hz # angular frequency in rad/s
-    if temp <= 0:
-        nbar = 0.0
-    else:
-        x = hbar * omega / (kB * temp)
-        try:
-            # prevent overflow at very low T
-            nbar = 1.0 / (np.exp(x) - 1.0)
-        except OverflowError:
-            nbar = 0.0
-            print("Warning: Overflow in nbar calculation; setting nbar=0. Check T and omega.")
+
+    # mean occupation number
+    nbar = 1.0 / (np.exp(hbar * omega / (kB * temp)) - 1.0)
+    # print(temp, omega / (2.0 * np.pi), nbar)
 
     # geometric: P(n) = (1/(1+nbar)) * (nbar/(1+nbar))^n , mean=nbar
     p = 1.0 / (1.0 + nbar) # success probability
@@ -327,7 +332,7 @@ def _sample_axis_QHO(m_kg: float, omega_Hz: float, T_uK: float, rng) -> Tuple[fl
     x0 = np.sqrt(2*E/(m_kg * omega**2)) * np.sin(theta) # meters
     v0 = np.sqrt(2*E/(m_kg)) * np.cos(theta) # m/s
 
-    return x0, v0
+    return x0, v0, nbar
 
 def sample_QHO_initial_3d(m_kg: float,
                           omegas_Hz_xyz: Tuple[float, float, float],
@@ -342,11 +347,11 @@ def sample_QHO_initial_3d(m_kg: float,
         rng: random number generator
     Returns: (x0_vec [μm], v0_vec [m/s]) for 3 axes.
     """
-    x0 = np.zeros(3); v0 = np.zeros(3)
+    x0 = np.zeros(3); v0 = np.zeros(3); n = np.zeros(3)
     for i, (om, temp) in enumerate(zip(omegas_Hz_xyz, Temps_uK_xyz)):
-        xi, vi = _sample_axis_QHO(m_kg, om, temp, rng)
-        x0[i], v0[i] = xi * 1e6, vi * 1e6 # position in μm and velocity in μm/s
-    return x0, v0
+        xi, vi, ni = _sample_axis_QHO(m_kg, om, temp, rng)
+        x0[i], v0[i], n[i] = xi * 1e6, vi * 1e6, ni # position in μm and velocity in μm/s
+    return x0, v0, n
 
 # # Lists to store initial conditions and displacements (for analysis/debugging)
 # x_atom2_list = []
@@ -394,20 +399,24 @@ def make_V_of_t_generator(c6_rad_um6: float,
     m_atom1 = cfg.mass_atom1
     m_atom2 = cfg.mass_atom2
 
-    x0_atom1_um, v0_atom1_umps = sample_QHO_initial_3d(
+    x0_atom1_um, v0_atom1_umps, n1 = sample_QHO_initial_3d(
         m_atom1, np.array(cfg.omega_trap_atom1_Hz) * cfg.load_factor, cfg.T_uK_atom1, rng
     )
 
-    x0_atom2_um, v0_atom2_umps = sample_QHO_initial_3d(
+    x0_atom2_um, v0_atom2_umps, n2 = sample_QHO_initial_3d(
         m_atom2, np.array(cfg.omega_trap_atom2_Hz) * cfg.load_factor, cfg.T_uK_atom2, rng
     )
+    cfg.n_list.append((n1, n2)) # store n values
 
     # for debugging / analysis, store sampled values
     # x_atom1_list.append(x0_atom1_um)
     # v_atom1_list.append(v0_atom1_umps)
     # x_atom2_list.append(x0_atom2_um)
     # v_atom2_list.append(v0_atom2_umps)
-
+    cfg.positions1_list.append(x0_atom1_um)
+    cfg.velocities1_list.append(v0_atom1_umps) # store displacement over tlist
+    cfg.positions2_list.append(x0_atom2_um)
+    cfg.velocities2_list.append(v0_atom2_umps) # store displacement over tlist
     # Relative position over time (μm)
     # R(t) = R0 + (x0_atom1 - x0_atom2) + (v_atom1 - v_atom2)*t
     dx = (x0_atom1_um - x0_atom2_um)
@@ -427,10 +436,12 @@ def make_V_of_t_generator(c6_rad_um6: float,
     def V_of_t(_times: np.ndarray) -> np.ndarray:
         # QuTiP will pass the same tlist; return precomputed array
         return V_t
-
+    energy_array1 = None
+    energy_array2 = None
     if cfg.simulate_atom1_recapture:
         # check if atom1 is recaptured (we are dominated by atom1 loss)
-        recaptured1 = is_atom_recaptured(x0_atom1_um, v0_atom1_umps,
+        recaptured1, energy_array = is_atom_recaptured(cfg,
+            x0_atom1_um, v0_atom1_umps,
             m_kg=m_atom1,
             omegas_Hz_xyz=cfg.omega_trap_atom1_Hz,
             Temps_uK_xyz=cfg.T_uK_atom1,
@@ -440,9 +451,11 @@ def make_V_of_t_generator(c6_rad_um6: float,
             rng=rng
         ) # True if recaptured, False if lost
         recaptured = recaptured1
+        cfg.energy_array1.append(energy_array)
     if cfg.simulate_atom2_recapture:
         # check if atom2 is recaptured (we are dominated by atom2 loss)
-        recaptured2 = is_atom_recaptured(x0_atom2_um, v0_atom2_umps,
+        recaptured2, energy_array = is_atom_recaptured(cfg,
+            x0_atom2_um, v0_atom2_umps,
             m_kg=m_atom2,
             omegas_Hz_xyz=cfg.omega_trap_atom2_Hz,
             Temps_uK_xyz=cfg.T_uK_atom2,
@@ -452,6 +465,7 @@ def make_V_of_t_generator(c6_rad_um6: float,
             rng=rng
         ) # True if recaptured, False if lost
         recaptured = recaptured2
+        cfg.energy_array2.append(energy_array)
     if not cfg.simulate_atom1_recapture and not cfg.simulate_atom2_recapture: # neither atom recapture simulated
         recaptured = True
     if cfg.simulate_atom1_recapture and cfg.simulate_atom2_recapture:
@@ -487,7 +501,8 @@ def simulate_shot(Delta_atom1_Hz,
     Delta_atom1_rad = 2 * np.pi * Delta_atom1_Hz
 
     # π-pulse time and time list
-    t_pi = np.pi / max(OMEGA_atom1_rad, 1e-30) # avoid div by zero [sec]
+    # t_pi = np.pi / max(OMEGA_atom1_rad, 1e-30) # avoid div by zero [sec]
+    t_pi = cfg.t_pi_atom1_us * 1e-6  # [sec]
     tlist = np.linspace(0.0, t_pi, cfg.N_steps) # 200 time steps
 
     # Prepare interaction function
@@ -543,9 +558,14 @@ def simulate_shot(Delta_atom1_Hz,
     if gamma_phi_atom2 > 0:
         c_ops.append(np.sqrt(0.5 * gamma_phi_atom2) * sz_atom2)
 
-    result = mesolve(H, psi0, tlist, c_ops=c_ops, e_ops=[n_atom1])
+    if cfg.hamiltonian_on == False: # skip Hamiltonian evolution just return 0 population
+        population = 1.0
+        return population
     
-    return 1-float(np.real(result.expect[0][-1]))
+    result = mesolve(H, psi0, tlist, c_ops=c_ops, e_ops=[n_atom1])
+    population = 1-float(np.real(result.expect[0][-1]))
+
+    return population
 
 # Detuning scan (Monte Carlo)
 # ----------------------------
@@ -558,6 +578,14 @@ def scan_detuning(cfg, c6_rad_um6=None, interaction_on=True):
         interaction_on: whether to include interaction term in Hamiltonian
     Returns: (Delta_scan_Hz, P_excitation)
     """
+    cfg.energy_array1 = [] # to store energy arrays if recapture simulated
+    cfg.energy_array2 = [] # to store energy arrays if recapture simulated
+    cfg.positions1_list = [] # to store positions if recapture simulated
+    cfg.positions2_list = [] # to store positions if recapture simulated
+    cfg.velocities1_list = [] # to store velocities if recapture simulated
+    cfg.velocities2_list = [] # to store velocities if recapture simulated
+    cfg.n_list = [] # to store n values if recapture simulated
+
     rng = np.random.default_rng(cfg.seed)
     if c6_rad_um6 is None:
         c6_rad_um6 = compute_c6_atom1_atom2_rad_per_s_um6(cfg)
