@@ -42,7 +42,7 @@ class ExperimentConfig:
     Configuration for the two-atom interaction experiment.
     """
     ### General atom information ###
-    # atom1 information
+    # atom1 information - always the atom you are measuring the spectrum of
     atom1: AlkaliAtom = field(default_factory=lambda: Sodium())
     mass_atom1: float = Sodium().mass # mass of atom1 (kg)
     n_atom1: int = 51 # Rydberg principal quantum number for atom1
@@ -54,7 +54,7 @@ class ExperimentConfig:
     T2_atom1_s: float = 5e-6 # coherence time for atom1
     wavelength_nm_atom1: float = 616.0 # trapping wavelength for atom1 (nm)
 
-    # atom2 information
+    # atom2 information - always the atom that is excited first
     atom2: AlkaliAtom = field(default_factory=lambda: Cesium())
     mass_atom2: float = Cesium().mass # mass of atom2 (kg)
     n_atom2: int = 54 # Rydberg principal quantum number for atom2
@@ -62,7 +62,7 @@ class ExperimentConfig:
     j_atom2: float = 0.5 # Rydberg total angular momentum for atom2
     m2: int = 0.5 # magnetic quantum number for atom2
     # Rabi frequency and coherence time
-    OMEGA_atom2_Hz: float = 0.0  # atom2 Rabi frequency (Hz)
+    OMEGA_atom2_Hz: float = 0.0  # atom2 Rabi frequency (Hz) (set to 0 always)
     T2_atom2_s: float = 20e-6 # coherence time for atom2
     wavelength_nm_atom2: float = 1064.0 # trapping wavelength for atom2 (nm)
     
@@ -72,8 +72,10 @@ class ExperimentConfig:
     R_axis_um: Tuple[float, float, float] = field(default_factory=lambda: (1.0, 0.0, 0.0))  # unit vector
 
     # relevant timing settings
-    t_pi_atom1_us: float = 1.0 # atom1 π pulse time (μs)
-    t_wait_s: float = 0.0 # wait time between pulses (not tested)
+    t_pi_atom1_us: float = None # atom1 π pulse time (μs)
+    # for just simulating release recapture t_pi_atom2_us must be set to 0 - otherwise it will be taken into account when calculating R(t)
+    t_pi_atom2_us: float = 0.5 # atom2 π pulse time (μs) (should be the pulse time used for preparing atom2 in |r>)
+    t_wait_s: float = 0.0 # wait time between pulses
     T1_use_ARC: bool = True # whether to use ARC lifetimes for T1
 
     ### Trap parameters for both atoms ###
@@ -289,8 +291,8 @@ def is_atom_recaptured(cfg: ExperimentConfig,
 
     # calculate potential energy using gaussian beam
     # calculate beam waist from radial and axial trap frequencies
-    w0 = (omegas_Hz_xyz[0] / omegas_Hz_xyz[2]) * wavelength_nm*1e-9 / (np.pi * np.sqrt(2))
-    # w0 = 0.6*1e-6 # hardcoded beam waist in m
+    # w0 = (omegas_Hz_xyz[0] / omegas_Hz_xyz[2]) * wavelength_nm*1e-9 / (np.pi * np.sqrt(2))
+    w0 = 0.6*1e-6 # hardcoded beam waist in m
     # print(w0)
     # calculate the beam waist at position z
     w_z = w0 * np.sqrt(1 + (r_vec[2] / (np.pi * w0**2 / (wavelength_nm*1e-9)))**2 )
@@ -322,11 +324,11 @@ def _sample_axis_QHO(m_kg: float, omega_Hz: float, T_uK: float, rng) -> Tuple[fl
     # mean occupation number
     nbar = 1.0 / (np.exp(hbar * omega / (kB * temp)) - 1.0)
     # print(temp, omega / (2.0 * np.pi), nbar)
-
+    print(nbar)
     # geometric: P(n) = (1/(1+nbar)) * (nbar/(1+nbar))^n , mean=nbar
     p = 1.0 / (1.0 + nbar) # success probability
     n = rng.geometric(p) - 1  # sample geometric distribution for n
-
+    print(n)
     E = (n + 0.5) * hbar * omega # energy in J
     theta = rng.uniform(0.0, 2*np.pi) # random phase
 
@@ -354,12 +356,7 @@ def sample_QHO_initial_3d(m_kg: float,
         x0[i], v0[i], n[i] = xi * 1e6, vi * 1e6, ni # position in μm and velocity in μm/s
     return x0, v0, n
 
-# # Lists to store initial conditions and displacements (for analysis/debugging)
-# x_atom2_list = []
-# x_atom1_list = []
-# v_atom2_list = []
-# v_atom1_list = []
-# displacement_list = []
+
 
 def make_V_of_t_generator(c6_rad_um6: float,
                           cfg: ExperimentConfig,
@@ -416,11 +413,6 @@ def make_V_of_t_generator(c6_rad_um6: float,
     
     cfg.n_list.append((n1, n2)) # store n values
 
-    # for debugging / analysis, store sampled values
-    # x_atom1_list.append(x0_atom1_um)
-    # v_atom1_list.append(v0_atom1_umps)
-    # x_atom2_list.append(x0_atom2_um)
-    # v_atom2_list.append(v0_atom2_umps)
     cfg.positions1_list.append(x0_atom1_um)
     cfg.velocities1_list.append(v0_atom1_umps) # store displacement over tlist
     cfg.positions2_list.append(x0_atom2_um)
@@ -429,16 +421,12 @@ def make_V_of_t_generator(c6_rad_um6: float,
     # R(t) = R0 + (x0_atom1 - x0_atom2) + (v_atom1 - v_atom2)*t
     dx = (x0_atom1_um - x0_atom2_um)
     dv = (v0_atom1_umps - v0_atom2_umps)
-    R_vec_t = R0_vec_um + dx + dv * tlist[:, None]
+    R_vec_t = R0_vec_um + dx + dv * (tlist[:, None] + cfg.t_pi_atom2_us * 1e-6) # include motion during atom2 π pulse
     # print(f"Initial relative position dx: {dx} μm")
     R_norm_t = np.linalg.norm(R_vec_t, axis=1)
     positions_list.append(dx)
     velocities_list.append(dv)
     
-    # avg_x_um = (np.linalg.norm(x0_atom1_um - x0_atom2_um))
-    # avg_v_umps = (np.linalg.norm(v0_atom1_umps - v0_atom2_umps))
-    # print(f"Sampled avg initial separation: {avg_x_um:.2f} μm")
-    # print(f"Sampled avg relative velocity: {avg_v_umps:.2f} μm/s")
     V_t = c6_rad_um6 / (R_norm_t ** 6)
 
     def V_of_t(_times: np.ndarray) -> np.ndarray:
@@ -446,6 +434,10 @@ def make_V_of_t_generator(c6_rad_um6: float,
         return V_t
     energy_array1 = None
     energy_array2 = None
+
+    if not cfg.simulate_atom1_recapture and not cfg.simulate_atom2_recapture: # neither atom recapture simulated
+        recaptured = True
+        return V_of_t, recaptured
     if cfg.simulate_atom1_recapture:
         # check if atom1 is recaptured (we are dominated by atom1 loss)
         recaptured1, energy_array = is_atom_recaptured(cfg,
@@ -454,7 +446,7 @@ def make_V_of_t_generator(c6_rad_um6: float,
             omegas_Hz_xyz=cfg.omega_trap_atom1_Hz,
             Temps_uK_xyz=cfg.T_uK_atom1,
             load_depth_T_uK=cfg.load_depth_T_atom1,
-            tlist=tlist,
+            tlist=tlist + cfg.t_pi_atom2_us * 1e-6, # include motion during atom2 π pulse
             wavelength_nm=cfg.wavelength_nm_atom1,
             rng=rng
         ) # True if recaptured, False if lost
@@ -468,17 +460,14 @@ def make_V_of_t_generator(c6_rad_um6: float,
             omegas_Hz_xyz=cfg.omega_trap_atom2_Hz,
             Temps_uK_xyz=cfg.T_uK_atom2,
             load_depth_T_uK=cfg.load_depth_T_atom2,
-            tlist=tlist,
+            tlist=tlist + cfg.t_pi_atom2_us * 1e-6, # include motion during atom2 π pulse
             wavelength_nm=cfg.wavelength_nm_atom2,
             rng=rng
         ) # True if recaptured, False if lost
         recaptured = recaptured2
         cfg.energy_array2.append(energy_array)
-    if not cfg.simulate_atom1_recapture and not cfg.simulate_atom2_recapture: # neither atom recapture simulated
-        recaptured = True
     if cfg.simulate_atom1_recapture and cfg.simulate_atom2_recapture:
         recaptured = recaptured1 and recaptured2
-
     # print(V_t)
     return V_of_t, recaptured
 
@@ -514,7 +503,8 @@ def simulate_shot(Delta_atom1_Hz,
     else:
         t_pi = cfg.t_pi_atom1_us * 1e-6  # [sec]
 
-    tlist = np.linspace(0.0, t_pi, cfg.N_steps) # 200 time steps
+    # time list for evolution contains pi pulse for each atom + wait time
+    tlist = np.linspace(0.0, t_pi, cfg.N_steps) # [sec]
 
     # Prepare interaction function
     if interaction_on:
@@ -533,7 +523,11 @@ def simulate_shot(Delta_atom1_Hz,
         # No interaction -> V(t) = 0 for all times
         V_of_t = lambda t: np.zeros_like(t)
 
-    # if atom is recaptured, proceed to build Hamiltonian and simulate
+    if cfg.hamiltonian_on == False: # skip Hamiltonian evolution just return 0 population
+        population = 1.0
+        return population
+
+    # if atom is recaptured and we want to simulate Hamiltonian, proceed to build Hamiltonian and simulate
 
     # Build Hamiltonian
     H = build_time_dependent_H(
@@ -568,10 +562,6 @@ def simulate_shot(Delta_atom1_Hz,
         c_ops.append(np.sqrt(0.5 * gamma_phi_atom1) * sz_atom1)
     if gamma_phi_atom2 > 0:
         c_ops.append(np.sqrt(0.5 * gamma_phi_atom2) * sz_atom2)
-
-    if cfg.hamiltonian_on == False: # skip Hamiltonian evolution just return 0 population
-        population = 1.0
-        return population
     
     result = mesolve(H, psi0, tlist, c_ops=c_ops, e_ops=[n_atom1])
     population = 1-float(np.real(result.expect[0][-1]))
