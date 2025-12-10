@@ -4,7 +4,8 @@ Rydberg two-atom interaction simulation with QuTiP + ARC
 Simulates any two atom Rydberg interaction spectroscopy with thermal motion-induced broadening.
 Sequence: (1) π pulse prepares atom2 in |r_1>, (2) scan atom1 detuning during atom1 π pulse.
 
-Date: 06 November 2025
+Date Created: 06 November 2025
+Last Modified: 03 December 2025
 Author: santi
 
 '''
@@ -74,7 +75,7 @@ class ExperimentConfig:
     # relevant timing settings
     t_pi_atom1_us: float = None # atom1 π pulse time (μs)
     # for just simulating release recapture t_pi_atom2_us must be set to 0 - otherwise it will be taken into account when calculating R(t)
-    t_pi_atom2_us: float = 0.5 # atom2 π pulse time (μs) (should be the pulse time used for preparing atom2 in |r>)
+    t_pi_atom2_us: float = 0.0 # atom2 π pulse time (μs) (should be the pulse time used for preparing atom2 in |r>)
     t_wait_s: float = 0.0 # wait time between pulses
     T1_use_ARC: bool = True # whether to use ARC lifetimes for T1
 
@@ -324,11 +325,11 @@ def _sample_axis_QHO(m_kg: float, omega_Hz: float, T_uK: float, rng) -> Tuple[fl
     # mean occupation number
     nbar = 1.0 / (np.exp(hbar * omega / (kB * temp)) - 1.0)
     # print(temp, omega / (2.0 * np.pi), nbar)
-    print(nbar)
+    # print(nbar)
     # geometric: P(n) = (1/(1+nbar)) * (nbar/(1+nbar))^n , mean=nbar
     p = 1.0 / (1.0 + nbar) # success probability
     n = rng.geometric(p) - 1  # sample geometric distribution for n
-    print(n)
+    # print(n)
     E = (n + 0.5) * hbar * omega # energy in J
     theta = rng.uniform(0.0, 2*np.pi) # random phase
 
