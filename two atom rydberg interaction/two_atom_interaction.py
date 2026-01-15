@@ -5,7 +5,7 @@ Simulates any two atom Rydberg interaction spectroscopy with thermal motion-indu
 Sequence: (1) π pulse prepares atom2 in |r_1>, (2) scan atom1 detuning during atom1 π pulse.
 
 Date Created: 06 November 2025
-Last Modified: 03 December 2025
+Last Modified: 15 December 2025
 Author: santi
 
 '''
@@ -92,8 +92,8 @@ class ExperimentConfig:
     load_depth_T_atom2: float = 100 # uK
 
     load_factor: float = np.sqrt(0.01)  # % of trap depth after dropping
-    squeeze_factor: Tuple[float, float, float] = (1.0, 1.0, 1.0) # factor to squeeze position/momentum spread (1.0 = no squeezing) (x = x / squeeze_factor, p = p * squeeze_factor)
-
+    squeeze_factor1: Tuple[float, float, float] = (1.0, 1.0, 1.0) # a1 factor to squeeze position/momentum spread (1.0 = no squeezing) (x = x / squeeze_factor, p = p * squeeze_factor)
+    squeeze_factor2: Tuple[float, float, float] = (1.0, 1.0, 1.0) # a2 factor to squeeze position/momentum spread (1.0 = no squeezing) (x = x / squeeze_factor, p = p * squeeze_factor)
     ### simulation information ###
     # use default_factory for arrays
     Delta_scan_Hz: np.ndarray = field(
@@ -402,15 +402,15 @@ def make_V_of_t_generator(c6_rad_um6: float,
         m_atom1, np.array(cfg.omega_trap_atom1_Hz) * cfg.load_factor, cfg.T_uK_atom1, rng
     )
     # squeeze position and momentum if needed
-    x0_atom1_um = x0_atom1_um / np.array(cfg.squeeze_factor)
-    v0_atom1_umps = v0_atom1_umps * np.array(cfg.squeeze_factor)
+    x0_atom1_um = x0_atom1_um / np.array(cfg.squeeze_factor1)
+    v0_atom1_umps = v0_atom1_umps * np.array(cfg.squeeze_factor1)
 
     x0_atom2_um, v0_atom2_umps, n2 = sample_QHO_initial_3d(
         m_atom2, np.array(cfg.omega_trap_atom2_Hz) * cfg.load_factor, cfg.T_uK_atom2, rng
     )
     # squeeze position and momentum if needed
-    x0_atom2_um = x0_atom2_um / np.array(cfg.squeeze_factor)
-    v0_atom2_umps = v0_atom2_umps * np.array(cfg.squeeze_factor)
+    x0_atom2_um = x0_atom2_um / np.array(cfg.squeeze_factor2)
+    v0_atom2_umps = v0_atom2_umps * np.array(cfg.squeeze_factor2)
     
     cfg.n_list.append((n1, n2)) # store n values
 
