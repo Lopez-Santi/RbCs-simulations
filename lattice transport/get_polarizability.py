@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 
-def get_polarizability(wavelength_nm, atom="Rb"):
+def get_polarizability(wavelength_nm, atom="Rb", orbital=None):
     """Get the polarizability of Rb or Cs at a specific wavelength.
        Rounding the wavelength to 2 decimal places to match data file precision.
     Args:
@@ -23,10 +23,13 @@ def get_polarizability(wavelength_nm, atom="Rb"):
         float: Polarizability in atomic units (a.u.).
     """
 
-    if atom == "Rb":
+    if atom == "Rb" and orbital==None:
         df = pd.read_csv("Rb1Pol/Rb1_5s.csv", skiprows=1)
-    elif atom == "Cs":
+    elif atom == "Cs" and orbital==None:
         df = pd.read_csv("Cs1Pol/Cs1_6s.csv", skiprows=1)
+    elif (atom=="Rb" or atom=="Cs" and orbital!=None):
+        filestring = atom+"1Pol/"+atom+"1_"+orbital+".csv"
+        df = pd.read_csv(filestring, skiprows=1)
     else:
         raise ValueError("Atom must be 'Rb' or 'Cs'")
 
