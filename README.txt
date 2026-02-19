@@ -1,4 +1,4 @@
-Welcome to Ni-lab-simulations.
+Welcome to RbCs-simulations.
 
 The goal is to have an organized place to store simulations that the various subgroups create for future use.
 Many of the simulations that are made can be utilized in the future and built upon, so it will be very useful
